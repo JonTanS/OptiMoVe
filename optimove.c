@@ -9,11 +9,33 @@
 #define WINMAX 168
 #define TAP_NOT_DATA false
 static Window *s_main_window;
+static Layer *s_canvas_layer;
 static TextLayer *s_output_layer;
 static TextLayer *s_time_layer = NULL;
 static int prev[3] = {0,0,0};
 static int currPos[3] = {0,0,0};
 static int numSteps = 0;
+static int startTime;
+static int bars = 0;
+static GFont King;
+
+static void canvas_update_proc(Layer *this_layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(this_layer);
+  // Draw the 'stalk'
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_draw_rect(ctx, GRect(0, 0, 144, 10));
+  if (bars == 1){
+    graphics_fill_rect(ctx, GRect(0, 0, 48, 10), 0, GCornerNone);
+  }
+  if (bars == 2){
+    graphics_fill_rect(ctx, GRect(0, 0, 96, 10), 0, GCornerNone);
+  }
+  if (bars >= 3) {
+    graphics_fill_rect(ctx, GRect(0, 0, 144, 10), 0, GCornerNone);
+  }
+  layer_set_update_proc(s_canvas_layer, canvas_update_proc);
+}
+
 
 static void update_time() {
   // Get a tm structure
@@ -34,13 +56,12 @@ static void update_time() {
   text_layer_set_text(s_time_layer, buffer);
   
 }
-
 static void data_handler(AccelData *data, uint32_t num_samples) {
   // Long lived buffer
   static char s_buffer[128];
   
   
-  
+  int tempTime = time(NULL);
   int avgX = (data[0].x + data[1].x + data[2].x)/3;
   int avgY = (data[0].y + data[1].y + data[2].y)/3;
   int avgZ = (data[0].z + data[1].z + data[2].z)/3;
@@ -62,11 +83,19 @@ static void data_handler(AccelData *data, uint32_t num_samples) {
   
   if (XChang > 200 && YChang > 200 && ZChang > 300) {
      numSteps++;
-     snprintf(s_buffer, sizeof(s_buffer), "ActionPoints: %d", numSteps);
   }
-  else {
-     snprintf(s_buffer, sizeof(s_buffer), "ActionPoints: %d", numSteps);
+  
+  if(tempTime - startTime > 5 + 5*bars) {
+    if(numSteps < 10){
+      vibes_short_pulse();
+      bars++;
+    }
+    else{
+      numSteps = 0;
+      startTime = tempTime;
+    }
   }
+  
   //Show the data
   text_layer_set_text(s_output_layer, s_buffer);
   
@@ -76,12 +105,14 @@ static void data_handler(AccelData *data, uint32_t num_samples) {
   if (s_time_layer != NULL)
     text_layer_destroy(s_time_layer);
   
+  King = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_KING_32));
+
   
   s_time_layer = text_layer_create(GRect(0, yPos, 144, 50));
   text_layer_set_background_color(s_time_layer, GColorClear);
   text_layer_set_text_color(s_time_layer, GColorBlack);
   // Improve the layout to be more like a watchface
-  text_layer_set_font(s_time_layer, fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD));
+  text_layer_set_font(s_time_layer, King);
   text_layer_set_text_alignment(s_time_layer, GTextAlignmentCenter);
   update_time();
   // Add it as a child layer to the Window's root layer
@@ -89,7 +120,6 @@ static void data_handler(AccelData *data, uint32_t num_samples) {
   
   
 }
-
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   update_time();
 }
@@ -103,6 +133,12 @@ static void main_window_load(Window *window) {
   text_layer_set_text(s_output_layer, "No data yet.");
   text_layer_set_overflow_mode(s_output_layer, GTextOverflowModeWordWrap);
   layer_add_child(window_layer, text_layer_get_layer(s_output_layer));
+  // Canvas
+  // Create Layer
+  s_canvas_layer = layer_create(GRect(0, 0, window_bounds.size.w, window_bounds.size.h));
+  layer_add_child(window_layer, s_canvas_layer);
+  // Set the update_proc
+  layer_set_update_proc(s_canvas_layer, canvas_update_proc);
   
   // Create time TextLayer for clock
   /*int yPos = window_bounds.size.h/2 + (window_bounds.size.h/2)*(currPos[1]/MAXY);
@@ -126,8 +162,12 @@ static void main_window_unload(Window *window) {
   
   // Destroy TextLayer
   text_layer_destroy(s_time_layer);
+  
+  layer_destroy(s_canvas_layer);
 }
 static void init() {
+  
+  startTime = time(NULL);
   // Create main Window
   s_main_window = window_create();
   // Set handlers to manage the elements inside the Window
